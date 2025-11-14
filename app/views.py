@@ -11,11 +11,18 @@ from django.utils import timezone
 from django.contrib.admin.views.decorators import staff_member_required
 from decimal import Decimal
 
+from rest_framework import viewsets, status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
+
 import requests
 import logging
 
-from .forms import BookingForm, EditProfileForm
+from .forms import BookingForm, EditProfileForm, CarForm
 from .models import Car, Booking, Customer, Driver, Maintenance
+from .serializers import CarSerializer
 
 
 # Set up logging
@@ -116,53 +123,83 @@ def booking_view(request):
 # ==================== AUTHENTICATION VIEWS ====================
 
 def register_view(request):
-    if request.user.is_authenticated:
-        return redirect('index')
-
+    # Allow viewing register page even if authenticated (show appropriate message)
+    # Only prevent registration if already authenticated
+    
     if request.method == 'POST':
-        username = request.POST.get('username')
-        email = request.POST.get('email')
-        password1 = request.POST.get('password1')
-        password2 = request.POST.get('password2')
+        # Only allow POST (actual registration) if not authenticated
+        if request.user.is_authenticated:
+            messages.warning(request, "You are already registered and logged in. Please logout to create a new account.")
+            return redirect('index')
+        username = request.POST.get('username', '').strip()
+        email = request.POST.get('email', '').strip()
+        password1 = request.POST.get('password1', '').strip()
+        password2 = request.POST.get('password2', '').strip()
         profile_pic = request.FILES.get('profile_pic')
+
+        # Validation
+        if not username or not email or not password1 or not password2:
+            messages.error(request, "All fields are required.")
+            return render(request, 'app/register.html')
 
         if password1 != password2:
             messages.error(request, "Passwords do not match.")
             return render(request, 'app/register.html')
 
+        if len(password1) < 6:
+            messages.error(request, "Password must be at least 6 characters long.")
+            return render(request, 'app/register.html')
+
         if User.objects.filter(username=username).exists():
-            messages.error(request, "Username already exists.")
+            messages.error(request, "Username already exists. Please choose another.")
             return render(request, 'app/register.html')
+        
         if User.objects.filter(email=email).exists():
-            messages.error(request, "Email already exists.")
+            messages.error(request, "Email already registered. Please login or use another email.")
             return render(request, 'app/register.html')
 
-        # Create user
-        user = User.objects.create_user(username=username, email=email, password=password1)
+        try:
+            # Create user
+            user = User.objects.create_user(username=username, email=email, password=password1)
 
-        # Safely create Customer
-        Customer.objects.get_or_create(user=user, defaults={'profile_pic': profile_pic})
+            # Safely create Customer
+            Customer.objects.get_or_create(user=user, defaults={'profile_pic': profile_pic})
 
-        login(request, user)
-        return redirect('index')
+            login(request, user)
+            messages.success(request, f"Registration successful! Welcome, {username}!")
+            logger.info(f"New user registered: {username}")
+            return redirect('index')
+        except Exception as e:
+            messages.error(request, f"Registration failed: {str(e)}")
+            logger.error(f"Registration error for {username}: {str(e)}")
+            return render(request, 'app/register.html')
 
     return render(request, 'app/register.html')
 
 
 def login_view(request):
     if request.user.is_authenticated:
-        return redirect('index')
+        # If user tries to visit /login while already logged in,
+        # show them the login page anyway (don't auto-redirect)
+        pass
 
     if request.method == "POST":
-        username = request.POST.get('username')
-        password = request.POST.get('password')
+        username = request.POST.get('username', '').strip()
+        password = request.POST.get('password', '').strip()
+
+        if not username or not password:
+            messages.error(request, "Username and password are required.")
+            return render(request, 'app/login.html')
 
         user = authenticate(request, username=username, password=password)
         if user is not None:
             login(request, user)
+            messages.success(request, f"Welcome back, {user.first_name or user.username}!")
+            logger.info(f"User {username} logged in successfully")
             return redirect('index')
         else:
-            messages.error(request, "Invalid username or password")
+            messages.error(request, "Invalid username or password. Please try again.")
+            logger.warning(f"Failed login attempt for username: {username}")
 
     return render(request, 'app/login.html')
 
@@ -461,6 +498,57 @@ def drivers_view(request):
     return render(request, "app/drivers.html", {"drivers": drivers, "total_drivers": total_drivers})
 
 
+# ==================== CAR CRUD VIEWS ====================
+
+@login_required
+def car_list_view(request):
+    cars_qs = Car.objects.all().order_by('category', 'registration_number')
+    return render(request, 'app/car_list.html', {'cars': cars_qs})
+
+
+@login_required
+def car_detail_view(request, pk):
+    car = get_object_or_404(Car, id=pk)
+    return render(request, 'app/car_detail.html', {'car': car})
+
+
+@staff_member_required
+def car_create_view(request):
+    if request.method == 'POST':
+        form = CarForm(request.POST, request.FILES)
+        if form.is_valid():
+            car = form.save()
+            messages.success(request, 'Car added successfully.')
+            return redirect('car_detail', pk=car.id)
+    else:
+        form = CarForm()
+    return render(request, 'app/car_form.html', {'form': form, 'title': 'Add Car'})
+
+
+@staff_member_required
+def car_update_view(request, pk):
+    car = get_object_or_404(Car, id=pk)
+    if request.method == 'POST':
+        form = CarForm(request.POST, request.FILES, instance=car)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Car updated successfully.')
+            return redirect('car_detail', pk=car.id)
+    else:
+        form = CarForm(instance=car)
+    return render(request, 'app/car_form.html', {'form': form, 'title': 'Edit Car'})
+
+
+@staff_member_required
+def car_delete_view(request, pk):
+    car = get_object_or_404(Car, id=pk)
+    if request.method == 'POST':
+        car.delete()
+        messages.success(request, 'Car deleted successfully.')
+        return redirect('car_list')
+    return render(request, 'app/car_confirm_delete.html', {'car': car})
+
+
 # ==================== STAFF VIEWS ====================
 
 @staff_member_required
@@ -556,3 +644,75 @@ def admin_dashboard(request):
         'pending_bookings': pending_bookings,
     }
     return render(request, 'app/admin_dashboard.html', context)
+
+
+# ==================== REST API - CAR CRUD ====================
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def car_api_list(request):
+    """
+    GET: List all cars (authenticated users)
+    POST: Create a new car (staff only)
+    """
+    if request.method == 'GET':
+        cars = Car.objects.all()
+        serializer = CarSerializer(cars, many=True)
+        return Response(serializer.data)
+    
+    elif request.method == 'POST':
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Only staff members can create cars.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        serializer = CarSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def car_api_detail(request, pk):
+    """
+    GET: Retrieve a specific car
+    PUT: Update a car (staff only)
+    DELETE: Delete a car (staff only)
+    """
+    try:
+        car = Car.objects.get(pk=pk)
+    except Car.DoesNotExist:
+        return Response(
+            {'error': 'Car not found.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    if request.method == 'GET':
+        serializer = CarSerializer(car)
+        return Response(serializer.data)
+    
+    elif request.method == 'PUT':
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Only staff members can update cars.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        serializer = CarSerializer(car, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    elif request.method == 'DELETE':
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Only staff members can delete cars.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        car.delete()
+        return Response(
+            {'message': 'Car deleted successfully.'},
+            status=status.HTTP_204_NO_CONTENT
+        )

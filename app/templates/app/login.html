@@ -10,6 +10,16 @@
 <body style="background: url('{% static 'app/images/car_bg.png' %}') no-repeat center center/cover; min-height: 100vh;">
   <div class="form-container">
     <h2>Login</h2>
+    
+    {% if messages %}
+        <div style="margin-bottom: 15px;">
+            {% for message in messages %}
+                <div style="padding: 10px; border-radius: 4px; margin-bottom: 10px; background-color: {% if message.tags %}#f8d7da{% else %}#d4edda{% endif %}; color: {% if message.tags %}#721c24{% else %}#155724{% endif %};">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
  
     <form method="post" action="{% url 'login' %}">
       {% csrf_token %}

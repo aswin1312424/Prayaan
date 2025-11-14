@@ -24,6 +24,17 @@ urlpatterns = [
     path('profile/', views.profile_view, name='profile'),
     path('drivers/', views.drivers_view, name='drivers'),
 
+    # App-level Car CRUD (staff-protected create/update/delete)
+    path('dashboard/cars/', views.car_list_view, name='car_list'),
+    path('dashboard/cars/add/', views.car_create_view, name='car_create'),
+    path('dashboard/cars/<int:pk>/', views.car_detail_view, name='car_detail'),
+    path('dashboard/cars/<int:pk>/edit/', views.car_update_view, name='car_update'),
+    path('dashboard/cars/<int:pk>/delete/', views.car_delete_view, name='car_delete'),
+
+     # REST API - Car CRUD (for curl commands)
+     path('api/cars/', views.car_api_list, name='car_api_list'),
+     path('api/cars/<int:pk>/', views.car_api_detail, name='car_api_detail'),
+
     # Staff URLs
     path('staff/booked_cars/', views.staff_booked_cars_view, name='staff_booked_cars'),
     path('staff/returned_cars/<int:booking_id>/', views.staff_returned_cars_view, name='staff_returned_cars'),

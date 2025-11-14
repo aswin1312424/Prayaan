@@ -125,3 +125,40 @@ class DriverForm(forms.ModelForm):
             }),
         }
 
+
+# --- Car ModelForm added for app-level CRUD ---
+class CarForm(forms.ModelForm):
+    class Meta:
+        from .models import Car
+        model = Car
+        fields = [
+            'category', 'ac_type', 'total_cars', 'registration_number',
+            'image', 'price', 'price_per_hour', 'price_per_km',
+            'fuel_consumption', 'status'
+        ]
+        widgets = {
+            'category': forms.Select(attrs={'class': 'form-control'}),
+            'ac_type': forms.Select(attrs={'class': 'form-control'}),
+            'total_cars': forms.NumberInput(attrs={'class': 'form-control'}),
+            'registration_number': forms.TextInput(attrs={'class': 'form-control'}),
+            'image': forms.FileInput(attrs={'class': 'form-control-file'}),
+            'price': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
+            'price_per_hour': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
+            'price_per_km': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
+            'fuel_consumption': forms.Select(attrs={'class': 'form-control'}),
+            'status': forms.Select(attrs={'class': 'form-control'}),
+        }
+
+    def clean_registration_number(self):
+        reg = self.cleaned_data.get('registration_number')
+        if reg:
+            return reg.upper()
+        return reg
+
+    def save(self, commit=True):
+        car = super().save(commit=False)
+        # Additional normalization or defaulting can go here
+        if commit:
+            car.save()
+        return car
+
